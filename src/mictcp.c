@@ -6,18 +6,28 @@
 
 mic_tcp_sock sockets[MAX_SOCKET]; // table de sockets
 
+#define MAX_SOCKET 5
+
+struct mic_tcp_sock sockets[MAX_SOCKET];
+
+int nb_fd = 0;
 /*
  * Permet de créer un socket entre l’application et MIC-TCP
  * Retourne le descripteur du socket ou bien -1 en cas d'erreur
  */
 int mic_tcp_socket(start_mode sm)
 {
-   int result = -1;
-   printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-   result = initialize_components(sm); /* Appel obligatoire */
-   set_loss_rate(0);
+    struct mic_tcp_sock sock;
+    int result = -1;
+    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
+    result = initialize_components(sm); /* Appel obligatoire */
+    set_loss_rate(0);
+    sock.fd = nb_fd;
+    sock.state = IDLE;
+    nb_fd += 1;
+    sockets[sock.fd] = sock;
 
-   return result;
+    return sock.fd;
 }
 
 /*
@@ -91,14 +101,11 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
 int mic_tcp_recv (int socket, char* mesg, int max_mesg_size)
 {
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
-    
     int recv = -1;
-
     mic_tcp_payload payload;
     payload.data = mesg;
     payload.size = max_mesg_size;
-    
-
+    recv = app_buffer_get(payload);
     return recv;
 }
 
@@ -110,7 +117,8 @@ int mic_tcp_recv (int socket, char* mesg, int max_mesg_size)
 int mic_tcp_close (int socket)
 {
     printf("[MIC-TCP] Appel de la fonction :  "); printf(__FUNCTION__); printf("\n");
-    return -1;
+    sockets[socket].state = CLOSED;
+    return 0;
 }
 
 /*
@@ -122,4 +130,5 @@ int mic_tcp_close (int socket)
 void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_ip_addr local_addr, mic_tcp_ip_addr remote_addr)
 {
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
+    app_buffer_put(pdu.payload);
 }
