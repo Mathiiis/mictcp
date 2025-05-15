@@ -6,10 +6,6 @@
 
 mic_tcp_sock sockets[MAX_SOCKET]; // table de sockets
 
-#define MAX_SOCKET 5
-
-struct mic_tcp_sock sockets[MAX_SOCKET];
-
 int nb_fd = 0;
 /*
  * Permet de créer un socket entre l’application et MIC-TCP
@@ -26,8 +22,9 @@ int mic_tcp_socket(start_mode sm)
     sock.state = IDLE;
     nb_fd += 1;
     sockets[sock.fd] = sock;
+    result = sock.fd;
 
-    return sock.fd;
+    return result;
 }
 
 /*
@@ -81,14 +78,14 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
 {
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
 
-    int send = -1;
+    //int send = -1;
     mic_tcp_pdu pdu;
     pdu.payload.data = mesg;
     pdu.payload.size = mesg_size;
 
     pdu.header.dest_port = sockets[mic_sock].remote_addr.port;
 
-    send = IP_send(pdu, sockets[mic_sock].remote_addr.ip_addr);
+    int send = IP_send(pdu, sockets[mic_sock].remote_addr.ip_addr);
     return send;
 }
 
@@ -101,11 +98,11 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
 int mic_tcp_recv (int socket, char* mesg, int max_mesg_size)
 {
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
-    int recv = -1;
+    //int recv = -1;
     mic_tcp_payload payload;
     payload.data = mesg;
     payload.size = max_mesg_size;
-    recv = app_buffer_get(payload);
+    int recv = app_buffer_get(payload);
     return recv;
 }
 
