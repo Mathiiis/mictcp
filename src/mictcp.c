@@ -2,13 +2,17 @@
 #include <api/mictcp_core.h>
 
 #define MAX_SOCKET 5
-#define TIMEOUT 101
+#define TIMEOUT 10
+#define TAILLE_FENETRE 10
+#define PERTES_TOLERES 2
 
 mic_tcp_sock sockets[MAX_SOCKET]; // table de sockets
 
 int nb_fd = 0;
 int PE = 0;
 int PA = 0;
+int fenetre[TAILLE_FENETRE] = {[0 ... TAILLE_FENETRE-1] = 1}; // succes 1, perte 0
+int indice_fenetre = 0;
 
 /*
  * Permet de créer un socket entre l’application et MIC-TCP
@@ -23,7 +27,7 @@ int mic_tcp_socket(start_mode sm)
     int result = initialize_components(sm); /* Appel obligatoire */
     
     if (result != -1) {
-        set_loss_rate(0);
+        set_loss_rate(20);
         sock.fd = nb_fd;
         sock.state = IDLE;
         nb_fd += 1;
@@ -106,17 +110,45 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
         pdu.payload.data = mesg;
         pdu.payload.size = mesg_size;
 
-        PE = (PE + 1) % 2;
+        PE = (PE + 1) % 2; // Incrémentation du PE
 
+        // Sinon, stop-and-wait
         sent = IP_send(pdu, remote_addr.ip_addr);
 
         while (control == 0){
-            if(IP_recv(&(ack), &local_addr.ip_addr, &remote_addr.ip_addr, TIMEOUT) != -1 && (ack.header.ack == 1) && (ack.header.ack_num == PE)){
+            int ret = IP_recv(&(ack), &local_addr.ip_addr, &remote_addr.ip_addr, TIMEOUT);
+            // ACK recu correspondant au pdu
+            if(ret != -1 && (ack.header.ack == 1) && (ack.header.ack_num == PE)){
                 control = 1;
-            } else {
-                sent = IP_send(pdu, remote_addr.ip_addr);
+                fenetre[indice_fenetre] = 1;
+                indice_fenetre = (indice_fenetre + 1) % TAILLE_FENETRE; // Incrémenter indice de la fenetre
+            }
+            // Expiration du timer 
+            else if (ret == -1){ 
+                fenetre[indice_fenetre] = 0;
+                
+                // Calcul taux de perte
+                int pertes = 0;
+                for (int i = 0; i < TAILLE_FENETRE; i++) {
+                    if (fenetre[i] == 0) pertes++;
+                }
+
+                // Si le taux de pertes esttoléré, envoyer sans attendre l'ACK
+                if (pertes <= PERTES_TOLERES) {
+                    PE = (PE + 1) % 2;
+                    control = 1;
+                    indice_fenetre = (indice_fenetre + 1) % TAILLE_FENETRE;
+
+                } 
+                // Perte non toléré, renvoi du PDU
+                else {
+                    sent = IP_send(pdu, remote_addr.ip_addr);
+                }
+
             }
         }
+    } else {
+        return -1;
     }
     return sent;
 }
