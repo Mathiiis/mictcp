@@ -3,30 +3,22 @@
 #include <pthread.h>
 
 #define MAX_SOCKET 5
-<<<<<<< Updated upstream
 #define TIMEOUT 10
 #define TAILLE_FENETRE 10
 #define PERTES_TOLERES 2
-=======
-#define TIMEOUT 101
-#define TAILLE 15
->>>>>>> Stashed changes
 
 mic_tcp_sock sockets[MAX_SOCKET]; // table de sockets
 
 int nb_fd = 0;
 int PE = 0;
 int PA = 0;
-int fenetre[TAILLE_FENETRE] = {[0 ... TAILLE_FENETRE-1] = 1}; // succes 1, perte 0
-int indice_fenetre = 0;
 
-int tab[TAILLE] = {[0 ... TAILLE-1] = 1}; //febetre glissante
-int indice_prochain_mesg = 0;
-int perte_tolere = 10;
 int perte_final = 0;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER ;
 pthread_cond_t condition = PTHREAD_COND_INITIALIZER ; 
+int fenetre[TAILLE_FENETRE] = {[0 ... TAILLE_FENETRE-1] = 1}; // succes 1, perte 0
+int indice_fenetre = 0;
 
 /*
  * Permet de créer un socket entre l’application et MIC-TCP
@@ -107,8 +99,9 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr* addr)
         syn_ack.header.syn = 1;
         syn_ack.header.ack = 1;
         syn_ack.header.seq_num = 0;
-        syn_ack.header.ack_num = perte_tolere;
+        syn_ack.header.ack_num = PERTES_TOLERES;
         syn_ack.payload.size = 0;
+        syn_ack.payload.data = NULL;
 
         // Envoi le PDU SYN_ACK
         if (IP_send(syn_ack, sock.local_addr.ip_addr) == -1){
@@ -161,6 +154,7 @@ int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
     syn.header.seq_num = 0;
     syn.header.ack_num = 0;
     syn.payload.size = 0;
+    syn.payload.data = NULL;
 
     int syn_ack_control = 0;
 
@@ -180,10 +174,10 @@ int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
 
             pourcentage_perte = syn_ack.header.ack_num;
 
-            if (pourcentage_perte < perte_tolere) {
+            if (pourcentage_perte < PERTES_TOLERES) {
                 perte_final = pourcentage_perte;
             } else {
-                perte_final = perte_tolere ;
+                perte_final = PERTES_TOLERES ;
             }
 
             // Creation PDU ACK
@@ -195,6 +189,7 @@ int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
             ack.header.ack = 1;
             ack.header.fin = 0;
             ack.payload.size = 0;
+            ack.payload.data = NULL;
 
             // Envoi PDU ACK
             if (IP_send(ack, sock.remote_addr.ip_addr) == -1) {
@@ -232,17 +227,12 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
         pdu.payload.data = mesg;
         pdu.payload.size = mesg_size;
 
-<<<<<<< Updated upstream
         PE = (PE + 1) % 2; // Incrémentation du PE
-=======
-        PE = (PE + 1) % 2; // incrementation de PE
->>>>>>> Stashed changes
-
+        
         // Sinon, stop-and-wait
         sent = IP_send(pdu, remote_addr.ip_addr);
 
         while (control == 0){
-<<<<<<< Updated upstream
             int ret = IP_recv(&(ack), &local_addr.ip_addr, &remote_addr.ip_addr, TIMEOUT);
             // ACK recu correspondant au pdu
             if(ret != -1 && (ack.header.ack == 1) && (ack.header.ack_num == PE)){
@@ -272,30 +262,6 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
                     sent = IP_send(pdu, remote_addr.ip_addr);
                 }
 
-=======
-            int recv_result = IP_recv(&(ack), &local_addr.ip_addr, &remote_addr.ip_addr, TIMEOUT);
-            if (recv_result != -1 && (ack.header.ack == 1) && (ack.header.ack_num == PE)){
-                control = 1;
-                tab[indice_prochain_mesg] = 1;
-                indice_prochain_mesg = (indice_prochain_mesg + 1) % TAILLE;
-            } else if (recv_result == -1) {
-                tab[indice_prochain_mesg] = 0;
-                int  nb_mesg_recus = 0;
-
-                for (int i = 0; i < TAILLE; i++){
-                    nb_mesg_recus += tab[i];
-                }
-
-                if ((float)(TAILLE - nb_mesg_recus)/(TAILLE * 100) <= perte_tolere){
-                    control = 1;
-                    PE = ( PE + 1 ) % 2 ;
-                    indice_prochain_mesg = (indice_prochain_mesg + 1) % TAILLE;
-                } else {
-                    sent = IP_send(pdu, remote_addr.ip_addr);
-                }                
-            } else {
-                printf("acquitement recue different de celui attendu");
->>>>>>> Stashed changes
             }
         }
     } else {
