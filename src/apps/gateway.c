@@ -18,7 +18,7 @@
 #define ENABLE_TCP_LOSS 1
 #define MAX_UDP_SEGMENT_SIZE 1480
 #define MICTCP_PORT 1337
-#define VIDEO_FILE "../video/video.bin"
+#define VIDEO_FILE "../video/video_wildlife.bin"
 
 /**
  * Macro utilisée pour afficher le message d'erreur msg passé en paramètre
@@ -243,7 +243,7 @@ static void file_to_mictcp(char* filename)
         /* Attente avant la prochaine lecture */
         struct timespec delay = tsSubtract(current_time, last_time);
         nanosleep(&delay, NULL);
-
+        printf("\n");
         /* Mise à jour du timestamp */
         last_time = current_time;
 

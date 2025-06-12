@@ -1,24 +1,19 @@
 #include <mictcp.h>
 #include <api/mictcp_core.h>
-#include <pthread.h>
 
 #define MAX_SOCKET 5
 #define TIMEOUT 10
-#define TAILLE_FENETRE 10
-#define PERTES_TOLERES 20
+#define TAILLE_FENETRE 100
+#define PERTE_TOLERES 10
 
-mic_tcp_sock sockets[MAX_SOCKET]; // table de sockets
+mic_tcp_sock sockets[MAX_SOCKET] ; // table de sockets
 
 int nb_fd = 0;
 int PE = 0;
 int PA = 0;
 
-int perte_final = 0;
-
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER ;
-pthread_cond_t condition = PTHREAD_COND_INITIALIZER ; 
-int fenetre[TAILLE_FENETRE] = {[0 ... TAILLE_FENETRE-1] = 1}; // succes 1, perte 0
-int indice_fenetre = 0;
+int fenetre[TAILLE_FENETRE] = {[0 ... TAILLE_FENETRE-1] = 1};
+int indice_fenetre = 0;  
 
 /*
  * Permet de créer un socket entre l’application et MIC-TCP
@@ -26,43 +21,40 @@ int indice_fenetre = 0;
  */
 int mic_tcp_socket(start_mode sm)
 {
-    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-    
     mic_tcp_sock sock;
-
-    int result = initialize_components(sm); /* Appel obligatoire */
     
-    if (result != -1) {
-        set_loss_rate(10);
-        sock.fd = nb_fd;
-        sock.state = IDLE;
+    int result = -1;
+    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
+    result = initialize_components(sm); /* Appel obligatoire */
+    set_loss_rate(5);
+    
+    if (result != -1){
+        sock.fd = nb_fd; // definir le numero de soc
+        sock.state = IDLE; 
         nb_fd += 1;
-        sockets[sock.fd] = sock;
+        sockets[sock.fd] = sock; // mettre le sock dans la table de sockets.
         result = sock.fd;
-        
-        return result;
+    } 
 
-    } else {
-        return -1;
-    }
+    return result;
 }
 
 /*
  * Permet d’attribuer une adresse à un socket.
  * Retourne 0 si succès, et -1 en cas d’échec
  */
-
 int mic_tcp_bind(int socket, mic_tcp_sock_addr addr)
 {
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-    
-    for(int i = 0; i < MAX_SOCKET; i++) {
-            if (i != socket && sockets[i].local_addr.port == addr.port) {       
-                return -1;
-            }
-    }
+
+    for (int i = 0; i < MAX_SOCKET; i++){
+        if (i != socket && sockets[socket].local_addr.port == addr.port){
+            return -1;
+        } 
+    } 
     sockets[socket].local_addr = addr;
-    return 0;
+    return 0; 
+
 }
 
 /*
@@ -71,49 +63,7 @@ int mic_tcp_bind(int socket, mic_tcp_sock_addr addr)
  */
 int mic_tcp_accept(int socket, mic_tcp_sock_addr* addr)
 {
-    printf("[MIC-TCP] Appel de la fonction: %s\n", __FUNCTION__);
-    if (socket < 0 || socket >= MAX_SOCKET) return -1;
-
-    sockets[socket].state = WAIT_SYN;
-
-    pthread_mutex_lock(&mutex);
-    while (sockets[socket].state == WAIT_SYN)
-    {
-        pthread_cond_wait(&condition, &mutex);
-    }
-    pthread_mutex_unlock(&mutex);
-
-    // Build SYN-ACK
-    mic_tcp_pdu syn_ack;
-    syn_ack.header.source_port = sockets[socket].local_addr.port;
-    syn_ack.header.dest_port = sockets[socket].remote_addr.port;
-    syn_ack.header.syn = 1;
-    syn_ack.header.ack = 1;
-    syn_ack.header.seq_num = 0;
-    syn_ack.header.ack_num = 1;
-    syn_ack.payload.size = 0;
-    syn_ack.payload.data = NULL;
-
-    if (IP_send(syn_ack, sockets[socket].remote_addr.ip_addr) == -1)
-    {
-        printf("Erreur d'envoi SYN-ACK\n");
-    }
-
-    sockets[socket].state = WAIT_ACK;
-
-    pthread_mutex_lock(&mutex);
-    while (sockets[socket].state == WAIT_ACK)
-    {
-        pthread_cond_wait(&condition, &mutex);
-    }
-    pthread_mutex_unlock(&mutex);
-
-    if (addr != NULL)
-    {
-        *addr = sockets[socket].remote_addr;
-    }
-
-    sockets[socket].state = CONNECTED;
+    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
     return 0;
 }
 
@@ -123,72 +73,11 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr* addr)
  */
 int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
 {
-    printf("[MIC-TCP] Appel de la fonction: %s\n", __FUNCTION__);
-    if (socket < 0 || socket >= MAX_SOCKET) {
-        printf("mic_tcp_connect: invalid socket index\n");
+    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
+    if (socket > MAX_SOCKET){
         return -1;
-    }
-
-    mic_tcp_pdu syn, syn_ack, ack;
-
-    // Save destination address
-    sockets[socket].remote_addr = addr;
-
-    // Build SYN
-    syn.header.source_port = sockets[socket].local_addr.port;
-    syn.header.dest_port = addr.port;
-    syn.header.syn = 1;
-    syn.header.ack = 0;
-    syn.header.seq_num = 0;
-    syn.header.ack_num = 0;
-    syn.payload.size = 0;
-    syn.payload.data = NULL;
-
-    int syn_ack_received = 0;
-    int retries = 0;
-    const int max_retries = 20;
-
-    // Wait for SYN-ACK with retry
-    while (!syn_ack_received && retries < max_retries)
-    {
-        if (IP_send(syn, addr.ip_addr) == -1) {
-            printf("Erreur d'envoi de SYN\n");
-        }
-
-        if (IP_recv(&syn_ack, &sockets[socket].local_addr.ip_addr, &addr.ip_addr, TIMEOUT) != -1 &&
-            syn_ack.header.syn == 1 && syn_ack.header.ack == 1)
-        {
-            syn_ack_received = 1;
-        }
-        else
-        {
-            retries++;
-        }
-    }
-
-    if (!syn_ack_received)
-    {
-        printf("Erreur : SYN-ACK non reçu après %d tentatives.\n", max_retries);
-        return -1;
-    }
-
-    // Build ACK
-    ack.header.source_port = sockets[socket].local_addr.port;
-    ack.header.dest_port = addr.port;
-    ack.header.syn = 0;
-    ack.header.ack = 1;
-    ack.header.fin = 0;
-    ack.header.seq_num = 0;
-    ack.header.ack_num = syn_ack.header.seq_num + 1;
-    ack.payload.size = 0;
-    ack.payload.data = NULL;
-
-    if (IP_send(ack, addr.ip_addr) == -1) {
-        printf("Erreur d'envoi de l'ACK final\n");
-        return -1;
-    }
-
-    //sockets[socket].state = CONNECTED;
+    }  
+    sockets[socket].remote_addr = addr; 
     return 0;
 }
 
@@ -198,67 +87,92 @@ int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
  */
 int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
 {
-    printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
-    
-    int sent = -1;
+    int send = -1;
     int control = 0;
 
-    mic_tcp_pdu pdu;
-    mic_tcp_pdu ack;
+    printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
 
+    // pdu ack
+    mic_tcp_pdu ack;
+    
+    // socket
     mic_tcp_sock sock = sockets[mic_sock];
-    mic_tcp_sock_addr remote_addr = sockets[mic_sock].remote_addr;
-    mic_tcp_sock_addr local_addr = sockets[mic_sock].local_addr;
+    mic_tcp_sock_addr local_addr = sock.local_addr;
+    mic_tcp_sock_addr remote_addr = sock.remote_addr;
+
+    // pdu message
+    mic_tcp_pdu pdu;
 
     if (mic_sock == sock.fd){
-        pdu.header.syn = 0;
-        pdu.header.ack = 0;
+        // definir le pdu à envoyer  
         pdu.header.dest_port = remote_addr.port;
+        pdu.header.source_port = local_addr.port;
         pdu.header.seq_num = PE;
+        pdu.header.ack = 0;
+        pdu.header.syn = 0;
+        pdu.header.fin = 0;
 
-        pdu.payload.data = mesg;
+        // mettre le message dans pdu
         pdu.payload.size = mesg_size;
+        pdu.payload.data = mesg;
 
-        PE = (PE + 1) % 2; // Incrémentation du PE
-        // Sinon, stop-and-wait
-        sent = IP_send(pdu, remote_addr.ip_addr);
+        //PE = (PE + 1) % 2; // incrementer PE
 
+        // envoyer le pdu a address remote ip
+        if ((send = IP_send(pdu, remote_addr.ip_addr)) == -1){
+            printf("error envoyer pdu\n");
+        } 
+
+        // adresse ip de local et remote pour ack
+        mic_tcp_ip_addr local_addr_ip;
+        mic_tcp_ip_addr remote_addr_ip;
+
+        ack.payload.size = 0;
+
+        // controle de recuperation ack
         while (control == 0){
-            int ret = IP_recv(&(ack), &local_addr.ip_addr, &remote_addr.ip_addr, TIMEOUT);
-            // ACK recu correspondant au pdu
-            if(ret != -1 && (ack.header.ack == 1) && (ack.header.ack_num == PE)){
-                control = 1;
-                fenetre[indice_fenetre] = 1;
-                indice_fenetre = (indice_fenetre + 1) % TAILLE_FENETRE; // Incrémenter indice de la fenetre
-            }
-            // Expiration du timer 
-            else if (ret == -1){ 
-                fenetre[indice_fenetre] = 0;
-                
-                // Calcul taux de perte
-                int pertes = 0;
-                for (int i = 0; i < TAILLE_FENETRE; i++) {
-                    if (fenetre[i] == 0) pertes++;
-                }
+            // si on a bien reçu pdu ack qufloat) vient de remote addr
+            int ret = IP_recv(&ack, &local_addr_ip, &remote_addr_ip, TIMEOUT);
+            if ((ret != -1) && (ack.header.ack == 1) && (ack.header.syn == 0) && (ack.header.ack_num != PE)){
+                printf("ack bien reçu\n"); // affiche debug message
+                fenetre[indice_fenetre] = 1;  // success
+                indice_fenetre = (indice_fenetre + 1) % TAILLE_FENETRE;
+                PE = (PE + 1) % 2;
+                control = 1; // arreter boucle
+                 
 
-                // Si le taux de pertes esttoléré, envoyer sans attendre l'ACK
-                if (pertes <= PERTES_TOLERES) {
-                    PE = (PE + 1) % 2;
-                    control = 1;
+            } else if (ret == -1) { // expiration de timer
+
+                fenetre[indice_fenetre] = 0; // pas de success
+                
+                // Calcul nb perte
+                int pertes = 0;
+                for (int i = 0; i < TAILLE_FENETRE; i++){
+                    if (fenetre[i] == 0){
+                        pertes++;
+                    } 
+                } 
+
+                //comparer le taux de perte avec PERTES_TOLERES
+                if (100*pertes/TAILLE_FENETRE <= PERTE_TOLERES){
                     indice_fenetre = (indice_fenetre + 1) % TAILLE_FENETRE;
+                    control = 1;
+
+                } else { // perte non tolere, renvoie pdu
+
+                    if ((send = IP_send(pdu, remote_addr.ip_addr)) == -1){
+                        printf("error envoyer pdu\n");
+                    } 
 
                 } 
-                // Perte non toléré, renvoi du PDU
-                else {
-                    sent = IP_send(pdu, remote_addr.ip_addr);
-                }
-
-            }
-        }
+            } 
+        } 
     } else {
-        return -1;
-    }
-    return sent;
+        send = -1;
+    }  
+
+    return send;
+    
 }
 
 /*
@@ -271,19 +185,23 @@ int mic_tcp_recv (int socket, char* mesg, int max_mesg_size)
 {
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
 
-    mic_tcp_sock sock = sockets[socket];
-    mic_tcp_payload payload;
-
-    payload.data = mesg;
-    payload.size = max_mesg_size;
-
     int recv = -1;
 
-    if (socket == sock.fd){
-        recv = app_buffer_get(payload);
-    }
-    
+    // socket
+    mic_tcp_sock sock = sockets[socket];
+
+    // message reçu
+    mic_tcp_payload payload;
+    payload.size = max_mesg_size;
+    payload.data = mesg;
+
+    // recevoir le message
+    if (sock.fd == socket){
+        recv = app_buffer_get(payload); 
+    } 
+
     return recv;
+
 }
 
 /*
@@ -294,7 +212,7 @@ int mic_tcp_recv (int socket, char* mesg, int max_mesg_size)
 int mic_tcp_close (int socket)
 {
     printf("[MIC-TCP] Appel de la fonction :  "); printf(__FUNCTION__); printf("\n");
-    sockets[socket].state = CLOSED;
+    sockets[socket].state = CLOSED; 
     return 0;
 }
 
@@ -306,91 +224,25 @@ int mic_tcp_close (int socket)
  */
 void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_ip_addr local_addr, mic_tcp_ip_addr remote_addr)
 {
-   printf("[MIC-TCP] Appel de la fonction: %s\n", __FUNCTION__);
+    printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
 
     mic_tcp_pdu ack;
 
-    // SYN received (client initiating connection)
-    if (pdu.header.syn == 1 && pdu.header.ack == 0)
-    {
-        for (int i = 0; i < MAX_SOCKET; i++)
-        {
-            if (sockets[i].state == WAIT_SYN)
-            {
-                sockets[i].remote_addr.ip_addr = remote_addr;
-                sockets[i].remote_addr.port = pdu.header.source_port;
+    if (pdu.header.seq_num == PA){
+        app_buffer_put(pdu.payload);
+        PA = (PA + 1) % 2;
+        printf("pdu bien reçu\n");
+    } 
 
-                pthread_mutex_lock(&mutex);
-                sockets[i].state = WAIT_SYN_ACK;
-                pthread_cond_broadcast(&condition); // Wake accept() from WAIT_SYN
-                printf("SYN SEND\n");
-                pthread_mutex_unlock(&mutex);
-                // Build and send SYN-ACK here
-                mic_tcp_pdu syn_ack;
-                syn_ack.header.source_port = sockets[i].local_addr.port;
-                syn_ack.header.dest_port = sockets[i].remote_addr.port;
-                syn_ack.header.syn = 1;
-                syn_ack.header.ack = 1;
-                syn_ack.header.seq_num = 0;
-                syn_ack.header.ack_num = 1;
-                syn_ack.payload.size = 0;
-                syn_ack.payload.data = NULL;
-                if (IP_send(syn_ack, sockets[i].remote_addr.ip_addr) == -1)
-                {
-                    printf("Erreur d'envoi SYN-ACK\n");
-                }
-                return;
-            }
-        }
-    }
+    ack.header.source_port = pdu.header.dest_port;
+    ack.header.dest_port = pdu.header.source_port;
+    ack.header.ack_num = PA;
+    ack.header.ack = 1;
+    ack.header.syn = 0;
 
-    // Final ACK received (client -> server completes handshake)
-    if (pdu.header.syn == 0 && pdu.header.ack == 1)
-    {
-        for (int i = 0; i < MAX_SOCKET; i++)
-        {
-            if (sockets[i].state == WAIT_ACK &&
-                sockets[i].remote_addr.ip_addr.addr == remote_addr.addr &&
-                sockets[i].remote_addr.port == pdu.header.source_port)
-            {
-                pthread_mutex_lock(&mutex);
-                sockets[i].state = CONNECTED;
-                pthread_cond_broadcast(&condition); // Wake accept() from WAIT_ACK
-                printf("ACK SEND\n");
-                pthread_mutex_unlock(&mutex);
-                return;
-            }
-        }
-    }
+    ack.payload.size = 0;
 
-    // Normal data packet
-    if (pdu.header.syn == 0 && pdu.header.ack == 0)
-    {
-        printf("[DEBUG] Incoming SEQ: %d, Expected PA: %d\n", pdu.header.seq_num, PA);
-
-        if (pdu.header.seq_num == PA)
-        {
-            printf("[DEBUG] Calling app_buffer_put with data: %.*s\n", pdu.payload.size, pdu.payload.data);
-            app_buffer_put(pdu.payload);
-            PA = (PA + 1) % 2;
-        }
-        else
-        {
-            printf("[DEBUG] Dropped packet with unexpected SEQ: %d (PA was %d)\n", pdu.header.seq_num, PA);
-        }
-
-
-
-        ack.header.dest_port = pdu.header.source_port;
-        ack.header.source_port = pdu.header.dest_port;
-        ack.header.ack = 1;
-        ack.header.ack_num = PA;
-        ack.payload.size = 0;
-        ack.payload.data = NULL;
-
-        if (IP_send(ack, remote_addr) == -1)
-        {
-            printf("Erreur d'envoi d'ACK\n");
-        }
-    }
+    if (IP_send(ack, remote_addr) == -1){
+        printf("erreur a envoyer ack\n");
+    } 
 }
