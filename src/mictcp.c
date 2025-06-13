@@ -1,5 +1,6 @@
 #include <mictcp.h>
 #include <api/mictcp_core.h>
+#include <pthread.h>
 
 #define IP_ADDR_MAX_LEN 46
 
@@ -21,6 +22,9 @@ int fenetre[TAILLE_FENETRE] = {[0 ... TAILLE_FENETRE-1] = 1};
 int indice_fenetre = 0;  
 int perte_tolere = 0;
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+
 /*
  * Permet de créer un socket entre l’application et MIC-TCP
  * Retourne le descripteur du socket ou bien -1 en cas d'erreur
@@ -32,7 +36,7 @@ int mic_tcp_socket(start_mode sm)
     int result = -1;
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
     result = initialize_components(sm); /* Appel obligatoire */
-    set_loss_rate(10);
+    set_loss_rate(0);
     
     if (result != -1){
         sock.fd = nb_fd; // definir le numero de soc
@@ -72,10 +76,18 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr* addr)
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
     int result = -1;
 
-    // attendre jusqu'à récuperer ACK
-    while(sockets[socket].state != ACK_RECEIVED){
-        sleep(1);
-    } 
+    if (pthread_mutex_lock(&mutex)){
+        printf("Erreur mutex lock\n");
+        exit(-1);
+    }
+
+    // attendre le condition à réaliser
+    pthread_cond_wait(&cond, &mutex);
+
+    if (pthread_mutex_unlock(&mutex)){
+        printf("Erreur mutex unlock\n");
+        exit(-1);
+    }
 
     // ACK bien reçu
     sockets[socket].state = CONNECTED;
@@ -385,6 +397,9 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_ip_addr local_addr, mic_tcp_i
         // changer l'état à ACK_RECEIVED
         if (sock != -1){
             sockets[sock].state = ACK_RECEIVED;
+
+            // signaler mutex en attente
+            pthread_cond_broadcast(&cond);
         } 
     } 
     
