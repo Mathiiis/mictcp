@@ -36,7 +36,7 @@ int mic_tcp_socket(start_mode sm)
     int result = -1;
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
     result = initialize_components(sm); /* Appel obligatoire */
-    set_loss_rate(0);
+    set_loss_rate(10);
     
     if (result != -1){
         sock.fd = nb_fd; // definir le numero de soc
@@ -165,7 +165,23 @@ int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
                     printf("erreur a envoyer ack\n");
                 } else {
                     result = 0;
-                } 
+                }
+
+                // Continuer à écouter d'éventuels SYN-ACK dupliqués
+                int wait = 1;
+                int wait_count = 0;
+                while (wait && wait_count < 5) { // 5 tentatives max
+                    int again = IP_recv(&syn_ack, &local_ip, &remote_ip, TIMEOUT);
+                    if ((again != -1) && (syn_ack.header.ack == 1) && (syn_ack.header.syn == 1)) {
+                        // Renvoyer l'ACK si SYN-ACK dupliqué reçu
+                        if (IP_send(ack, addr.ip_addr) == -1){
+                            printf("erreur a renvoyer ack\n");
+                        }
+                        wait_count++;
+                    } else {
+                        wait = 0;
+                    }
+                }
             } else {
                 // renvoyer SYN si pas reçu SYN_ACK
                 if (IP_send(syn, addr.ip_addr) == -1){
@@ -327,7 +343,7 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_ip_addr local_addr, mic_tcp_i
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
 
     int client_loss_rate;
-    int server_loss_rate = 10;
+    int server_loss_rate = SERVER_LOSS_RATE;
     int final_loss_rate;
 
     // vérifier si pdu reçu est SYN pendant la connexion
